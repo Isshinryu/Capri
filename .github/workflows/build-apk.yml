@@ -12,7 +12,13 @@ permissions:
 
 jobs:
   build:
+    name: Build Android APK
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      ANDROID_HOME: ${{ runner.temp }}/android-sdk
+      ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
 
     steps:
       - name: Checkout repository
@@ -24,21 +30,42 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          cd "$RUNNER_TEMP"
+
+          curl -fL --retry 3 \
+            https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip \
+            -o android-commandline-tools.zip
+
+          mkdir -p android-tools
+          unzip -q android-commandline-tools.zip -d android-tools
+
+          mkdir -p "$ANDROID_HOME/cmdline-tools/latest"
+          cp -a android-tools/cmdline-tools/. \
+            "$ANDROID_HOME/cmdline-tools/latest/"
+
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            --sdk_root="$ANDROID_HOME" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: platform-tools
-
-      - name: Install required Android SDK packages
-        run: |
-          set -euo pipefail
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
-          yes | sdkmanager --licenses >/dev/null || true
-
-      - name: Reassemble project archive
+      - name: Reassemble Android project
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -46,45 +73,43 @@ jobs:
           test -f Capri-Android-Project-v0.3.6-all-assets.zip.part01
 
           cat Capri-Android-Project-v0.3.6-all-assets.zip.part* > project.zip
-
           unzip -tq project.zip
-          mkdir -p extracted
+          mkdir extracted
           unzip -q project.zip -d extracted
 
-      - name: Find Android project
+      - name: Locate Android project
         id: project
+        shell: bash
         run: |
           set -euo pipefail
 
-          SETTINGS_FILE="$(find extracted -type f -name settings.gradle.kts -print -quit)"
+          SETTINGS_FILE="$(find extracted -type f \
+            -name settings.gradle.kts -print -quit)"
 
-          if [ -z "$SETTINGS_FILE" ]; then
-            echo "ERROR: settings.gradle.kts was not found in the archive."
+          test -n "$SETTINGS_FILE" || {
+            echo "::error::settings.gradle.kts not found in the archive"
             exit 1
-          fi
+          }
 
           PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
 
-          if [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
-            echo "ERROR: app/build.gradle.kts was not found."
+          test -f "$PROJECT_DIR/app/build.gradle.kts" || {
+            echo "::error::app/build.gradle.kts not found"
             exit 1
-          fi
+          }
 
           echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-          echo "Android project found at: $PROJECT_DIR"
+          echo "Project directory: $PROJECT_DIR"
 
       - name: Patch missing ViewTreeObserver import
         env:
           PROJECT_DIR: ${{ steps.project.outputs.dir }}
+        shell: bash
         run: |
           set -euo pipefail
 
           FILE="$PROJECT_DIR/app/src/main/java/com/capri/mobile/CompanionService.kt"
-
-          if [ ! -f "$FILE" ]; then
-            echo "ERROR: CompanionService.kt was not found."
-            exit 1
-          fi
+          test -f "$FILE"
 
           if ! grep -q '^import android.view.ViewTreeObserver$' "$FILE"; then
             sed -i '/^package /a\
@@ -92,38 +117,38 @@ jobs:
 import android.view.ViewTreeObserver' "$FILE"
           fi
 
-          echo "Checked ViewTreeObserver import."
-
       - name: Verify original assets
         working-directory: ${{ steps.project.outputs.dir }}
+        shell: bash
         run: |
           set -euo pipefail
 
           if [ -f tools/verify_assets.py ]; then
             python3 tools/verify_assets.py
           else
-            echo "Asset verification script not found; skipping."
+            echo "::warning::Asset verification script not found"
           fi
 
       - name: Build debug APK
         working-directory: ${{ steps.project.outputs.dir }}
+        shell: bash
         run: |
           set -euo pipefail
           chmod +x gradlew
-          ./gradlew --no-daemon clean assembleDebug
+          ./gradlew --no-daemon --stacktrace clean assembleDebug
 
-      - name: Verify and identify APK
+      - name: Verify APK
         env:
           PROJECT_DIR: ${{ steps.project.outputs.dir }}
+        shell: bash
         run: |
           set -euo pipefail
 
           APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
-
-          if [ ! -f "$APK" ]; then
-            echo "ERROR: Build finished without producing the expected APK."
+          test -s "$APK" || {
+            echo "::error::Gradle did not produce app-debug.apk"
             exit 1
-          fi
+          }
 
           mkdir -p output
           cp "$APK" output/Capri-Android-v0.3.6-debug.apk
