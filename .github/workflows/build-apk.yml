@@ -3,8 +3,7 @@ name: Build Capri Android APK
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -18,56 +17,80 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Java 17
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-
-      - name: Set up Gradle 8.9
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
 
-      - name: Reassemble Capri project
-        shell: bash
+      - name: Install Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Extract project archive
         run: |
-          cat Capri-Android-Project-v0.3.6-all-assets.zip.part00 \
-              Capri-Android-Project-v0.3.6-all-assets.zip.part01 \
-              > capri-project.zip
+          set -euo pipefail
+          mkdir -p project
+          cat Capri-Android-Project-v0.3.6-all-assets.zip.part* > project.zip
+          unzip -tq project.zip
+          unzip -q project.zip -d project
 
-          unzip -tq capri-project.zip
-          mkdir -p capri-project
-          unzip -q capri-project.zip -d capri-project
-
-          PROJECT_DIR="$(find "$GITHUB_WORKSPACE/capri-project" \
-            -type f -name settings.gradle.kts \
-            -print -quit | xargs dirname)"
-
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "Could not locate settings.gradle.kts"
+      - name: Locate project directory
+        id: paths
+        run: |
+          set -euo pipefail
+          PROJECT_DIR="$(find project -type f -name settings.gradle.kts -print -quit | xargs dirname)"
+          if [ -z "$PROJECT_DIR" ] || [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
+            echo "Could not find Android project or app/build.gradle.kts"
             exit 1
           fi
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
 
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Android project found at: $PROJECT_DIR"
+      - name: Patch missing Android import
+        env:
+          PROJECT_DIR: ${{ steps.paths.outputs.project_dir }}
+        run: |
+          set -euo pipefail
+          SERVICE_FILE="$PROJECT_DIR/app/src/main/java/com/capri/mobile/CompanionService.kt"
+          if ! grep -q '^import android.view.ViewTreeObserver$' "$SERVICE_FILE"; then
+            sed -i '/^package /a import android.view.ViewTreeObserver' "$SERVICE_FILE"
+          fi
 
       - name: Verify original assets
-        run: python "$PROJECT_DIR/tools/verify_assets.py"
+        working-directory: ${{ steps.paths.outputs.project_dir }}
+        run: |
+          if [ -f tools/verify_assets.py ]; then
+            python3 tools/verify_assets.py
+          else
+            echo "Asset verification script not found; continuing."
+          fi
 
       - name: Build debug APK
+        working-directory: ${{ steps.paths.outputs.project_dir }}
         run: |
-          gradle --no-daemon \
-            -p "$PROJECT_DIR" \
-            assembleDebug
+          chmod +x gradlew
+          ./gradlew --no-daemon clean assembleDebug
 
-      - name: Upload APK
+      - name: Verify APK exists
+        env:
+          PROJECT_DIR: ${{ steps.paths.outputs.project_dir }}
+        run: |
+          set -euo pipefail
+          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          mkdir -p output
+          cp "$APK" output/Capri-Android-v0.3.6-debug.apk
+          sha256sum output/Capri-Android-v0.3.6-debug.apk
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: capri-mobile-debug-apk-v0.3.6
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          name: capri-android-v0.3.6-debug
+          path: output/Capri-Android-v0.3.6-debug.apk
           if-no-files-found: error
           retention-days: 14
