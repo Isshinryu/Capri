@@ -18,7 +18,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Java
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -27,10 +27,13 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
-      - name: Set up Gradle
+      - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
 
       - name: Reassemble Capri project
+        shell: bash
         run: |
           cat Capri-Android-Project-v0.3.6-all-assets.zip.part00 \
               Capri-Android-Project-v0.3.6-all-assets.zip.part01 \
@@ -44,21 +47,20 @@ jobs:
             -type f -name settings.gradle.kts \
             -print -quit | xargs dirname)"
 
-          if [ -z "$PROJECT_DIR" ] || [ ! -f "$PROJECT_DIR/gradlew" ]; then
-            echo "Could not locate the Android Gradle project."
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "Could not locate settings.gradle.kts"
             exit 1
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Android project found at: $PROJECT_DIR"
 
       - name: Verify original assets
         run: python "$PROJECT_DIR/tools/verify_assets.py"
 
       - name: Build debug APK
         run: |
-          chmod +x "$PROJECT_DIR/gradlew"
-          "$PROJECT_DIR/gradlew" \
-            --no-daemon \
+          gradle --no-daemon \
             -p "$PROJECT_DIR" \
             assembleDebug
 
@@ -66,7 +68,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: capri-mobile-debug-apk-v0.3.6
-          path: |
-            ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
