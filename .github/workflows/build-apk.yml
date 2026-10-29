@@ -1,3 +1,4 @@
+
 name: Build Capri Android APK
 
 on:
@@ -38,22 +39,32 @@ jobs:
         with:
           gradle-version: "8.9"
 
+      - name: Reassemble v0.3.5 ZIP
+        run: |
+          set -euo pipefail
+
+          PART0="Capri-Android-Project-v0.3.5-all-assets.zip.part00"
+          PART1="Capri-Android-Project-v0.3.5-all-assets.zip.part01"
+          ZIP_FILE="Capri-Android-Project-v0.3.5-all-assets.zip"
+
+          test -f "$PART0"
+          test -f "$PART1"
+
+          cat "$PART0" "$PART1" > "$ZIP_FILE"
+          unzip -tq "$ZIP_FILE"
+
       - name: Extract Android project
         run: |
-          ZIP_FILE="Capri-Android-Prototype-v0.2.2.zip"
-
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "ERROR: Corrected project ZIP is missing."
-            exit 1
-          fi
+          set -euo pipefail
 
           mkdir -p android-project
-          unzip -oq "$ZIP_FILE" -d android-project
+          unzip -oq "Capri-Android-Project-v0.3.5-all-assets.zip" -d android-project
 
           PROJECT_DIR="$(find android-project -name settings.gradle.kts -print -quit | xargs -r dirname)"
 
           if [ -z "$PROJECT_DIR" ] || [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
-            echo "ERROR: Android project files were not found."
+            echo "Android project files not found."
+            unzip -Z1 "Capri-Android-Project-v0.3.5-all-assets.zip" | head -80
             exit 1
           fi
 
@@ -65,20 +76,18 @@ jobs:
 
       - name: Verify APK
         run: |
+          set -euo pipefail
+
           APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
 
-          if [ ! -f "$APK" ]; then
-            echo "ERROR: APK was not generated."
-            exit 1
-          fi
-
+          test -f "$APK"
           ls -lh "$APK"
           echo "APK_PATH=$APK" >> "$GITHUB_ENV"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: capri-mobile-debug-apk
+          name: capri-mobile-debug-apk-v0.3.5
           path: ${{ env.APK_PATH }}
           if-no-files-found: error
           retention-days: 14
