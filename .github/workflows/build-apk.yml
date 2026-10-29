@@ -12,14 +12,13 @@ permissions:
 
 jobs:
   build:
-    name: Build Capri APK
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Java 17
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -28,66 +27,46 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
-      - name: Install Android packages
-        run: |
-          sdkmanager "platforms;android-35"
-          sdkmanager "build-tools;35.0.0"
-          sdkmanager "platform-tools"
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
 
-      - name: Reassemble v0.3.5 ZIP
+      - name: Reassemble Capri project
         run: |
-          set -euo pipefail
+          cat Capri-Android-Project-v0.3.6-all-assets.zip.part00 \
+              Capri-Android-Project-v0.3.6-all-assets.zip.part01 \
+              > capri-project.zip
 
-          PART0="Capri-Android-Project-v0.3.5-all-assets.zip.part00"
-          PART1="Capri-Android-Project-v0.3.5-all-assets.zip.part01"
-          ZIP_FILE="Capri-Android-Project-v0.3.5-all-assets.zip"
+          unzip -tq capri-project.zip
+          mkdir -p capri-project
+          unzip -q capri-project.zip -d capri-project
 
-          test -f "$PART0"
-          test -f "$PART1"
+          PROJECT_DIR="$(find "$GITHUB_WORKSPACE/capri-project" \
+            -type f -name settings.gradle.kts \
+            -print -quit | xargs dirname)"
 
-          cat "$PART0" "$PART1" > "$ZIP_FILE"
-          unzip -tq "$ZIP_FILE"
-
-      - name: Extract Android project
-        run: |
-          set -euo pipefail
-
-          mkdir -p android-project
-          unzip -oq "Capri-Android-Project-v0.3.5-all-assets.zip" -d android-project
-
-          PROJECT_DIR="$(find android-project -name settings.gradle.kts -print -quit | xargs -r dirname)"
-
-          if [ -z "$PROJECT_DIR" ] || [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
-            echo "Android project files not found."
-            unzip -Z1 "Capri-Android-Project-v0.3.5-all-assets.zip" | head -80
+          if [ -z "$PROJECT_DIR" ] || [ ! -f "$PROJECT_DIR/gradlew" ]; then
+            echo "Could not locate the Android Gradle project."
             exit 1
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Found project at: $PROJECT_DIR"
+
+      - name: Verify original assets
+        run: python "$PROJECT_DIR/tools/verify_assets.py"
 
       - name: Build debug APK
-        run: gradle --no-daemon -p "$PROJECT_DIR" assembleDebug
-
-      - name: Verify APK
         run: |
-          set -euo pipefail
-
-          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
-
-          test -f "$APK"
-          ls -lh "$APK"
-          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+          chmod +x "$PROJECT_DIR/gradlew"
+          "$PROJECT_DIR/gradlew" \
+            --no-daemon \
+            -p "$PROJECT_DIR" \
+            assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: capri-mobile-debug-apk-v0.3.5
-          path: ${{ env.APK_PATH }}
+          name: capri-mobile-debug-apk-v0.3.6
+          path: |
+            ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
