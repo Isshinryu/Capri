@@ -115,10 +115,11 @@ jobs:
           ls -lh "$APK"
           sha256sum "$APK"
 
-      - name: Upload debug APK
+      - 
+      - name: Upload extracted Android project source
         uses: actions/upload-artifact@v4
         with:
-          name: capri-mobile-debug-apk-v0.3.5
-          path: ${{ env.APK_PATH }}
+          name: capri-android-source-v0.3.5
+          path: android-project/
           if-no-files-found: error
           retention-days: 14
