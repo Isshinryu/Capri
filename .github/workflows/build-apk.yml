@@ -2,12 +2,10 @@ name: Build Capri Android APK
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
       - ".github/workflows/build-apk.yml"
-      - "Capri-Android-Project-v0.3.5-all-assets.zip.part00"
-      - "Capri-Android-Project-v0.3.5-all-assets.zip.part01"
+      - "Capri-Android-Access-and-Agent-0.6.0.zip"
   workflow_dispatch:
 
 permissions:
@@ -21,8 +19,7 @@ jobs:
   build:
     name: Build Capri APK
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -48,58 +45,53 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Verify and reassemble source archive
+      - name: Verify source archive
         shell: bash
         run: |
           set -euo pipefail
-
-          PART0="Capri-Android-Project-v0.3.5-all-assets.zip.part00"
-          PART1="Capri-Android-Project-v0.3.5-all-assets.zip.part01"
-          ZIP_FILE="Capri-Android-Project-v0.3.5-all-assets.zip"
-
-          for part in "$PART0" "$PART1"; do
-            if [[ ! -s "$part" ]]; then
-              echo "::error::Missing or empty archive part: $part"
-              exit 1
-            fi
-            ls -lh "$part"
-          done
-
-          cat "$PART0" "$PART1" > "$ZIP_FILE"
+          ZIP_FILE="Capri-Android-Access-and-Agent-0.6.0.zip"
+          if [[ ! -s "$ZIP_FILE" ]]; then
+            echo "::error::Missing $ZIP_FILE in the repository root. Upload the 0.6.0 source ZIP, not the larger build kit."
+            exit 1
+          fi
+          ls -lh "$ZIP_FILE"
           unzip -tq "$ZIP_FILE"
-          echo "Archive integrity check passed."
 
-      - name: Extract and validate Android project
+      - name: Extract and locate Android project
         shell: bash
         run: |
           set -euo pipefail
-
           mkdir -p android-project
-          unzip -oq "Capri-Android-Project-v0.3.5-all-assets.zip" -d android-project
-
+          unzip -oq "Capri-Android-Access-and-Agent-0.6.0.zip" -d android-project
           SETTINGS_FILE="$(find android-project -type f -name settings.gradle.kts -print -quit)"
-
           if [[ -z "$SETTINGS_FILE" ]]; then
-            echo "::error::settings.gradle.kts not found."
-            unzip -Z1 "Capri-Android-Project-v0.3.5-all-assets.zip" | head -80
+            echo "::error::settings.gradle.kts not found in the source archive."
+            unzip -Z1 "Capri-Android-Access-and-Agent-0.6.0.zip" | head -80
             exit 1
           fi
-
           PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
-
           if [[ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]]; then
-            echo "::error::app/build.gradle.kts not found."
-            find "$PROJECT_DIR" -maxdepth 3 -type f | sort | head -120
+            echo "::error::app/build.gradle.kts not found beside settings.gradle.kts."
             exit 1
           fi
-
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Android project located at: $PROJECT_DIR"
+          echo "Located project at $PROJECT_DIR"
 
-      - name: Upload extracted Android project source
+      - name: Verify mirrored assets when verifier is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERIFIER="$(find "$PROJECT_DIR" -type f -path '*/tools/verify_assets.py' -print -quit)"
+          if [[ -n "$VERIFIER" ]]; then
+            python3 "$VERIFIER"
+          else
+            echo "No optional asset verifier found; continuing to Android build."
+          fi
+
+      - name: Upload Android project source
         uses: actions/upload-artifact@v4
         with:
-          name: capri-android-source-v0.3.5
+          name: capri-android-source-0.6.0
           path: android-project/
           if-no-files-found: error
           retention-days: 14
@@ -114,15 +106,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
-
           if [[ ! -s "$APK" ]]; then
             echo "::error::Debug APK was not produced."
             find "$PROJECT_DIR/app/build/outputs" -type f -print 2>/dev/null || true
             exit 1
           fi
-
           echo "APK_PATH=$APK" >> "$GITHUB_ENV"
           ls -lh "$APK"
           sha256sum "$APK"
@@ -130,7 +119,7 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: capri-mobile-debug-apk-v0.3.5
+          name: capri-android-debug-apk-0.6.0
           path: ${{ env.APK_PATH }}
           if-no-files-found: error
           retention-days: 14
