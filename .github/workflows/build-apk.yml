@@ -1,4 +1,4 @@
-name: Build Capri Android APK
+name:name: Build Capri Android APK
 
 on:
   push:
@@ -34,6 +34,85 @@ jobs:
         uses: android-actions/setup-android@v4
 
       - name: Install Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Verify source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_FILE="Capri-Android-Access-and-Agent-0.6.0.zip"
+          if [[ ! -s "$ZIP_FILE" ]]; then
+            echo "::error::Missing $ZIP_FILE in the repository root."
+            exit 1
+          fi
+          ls -lh "$ZIP_FILE"
+          unzip -tq "$ZIP_FILE"
+
+      - name: Extract and locate Android project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p android-project
+          unzip -oq "Capri-Android-Access-and-Agent-0.6.0.zip" -d android-project
+          SETTINGS_FILE="$(find android-project -type f -name settings.gradle.kts -print -quit)"
+          if [[ -z "$SETTINGS_FILE" ]]; then
+            echo "::error::settings.gradle.kts not found in the source archive."
+            unzip -Z1 "Capri-Android-Access-and-Agent-0.6.0.zip" | head -80
+            exit 1
+          fi
+          PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
+          if [[ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]]; then
+            echo "::error::app/build.gradle.kts not found beside settings.gradle.kts."
+            exit 1
+          fi
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Located project at $PROJECT_DIR"
+
+      - name: Upload Android project source
+        uses: actions/upload-artifact@v4
+        with:
+          name: capri-android-source-0.6.0
+          path: android-project/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Build debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --stacktrace -p "$PROJECT_DIR" assembleDebug
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+          if [[ ! -s "$APK" ]]; then
+            echo "::error::Debug APK was not produced."
+            find "$PROJECT_DIR/app/build/outputs" -type f -print 2>/dev/null || true
+            exit 1
+          fi
+          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+          ls -lh "$APK"
+          sha256sum "$APK"
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: capri-android-debug-apk-0.6.0
+          path: ${{ env.APK_PATH }}
+          if-no-files-found: error
+          retention-days: 14
+
         shell: bash
         run: |
           set -euo pipefail
